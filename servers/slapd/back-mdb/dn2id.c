@@ -56,7 +56,8 @@ typedef struct diskNode {
 int
 mdb_dup_compare(
 	const MDB_val *usrkey,
-	const MDB_val *curkey
+	const MDB_val *curkey,
+	void *ctx
 )
 {
 	diskNode *un, *cn;
