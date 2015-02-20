@@ -847,6 +847,18 @@ int  mdb_env_get_fd(MDB_env *env, mdb_filehandle_t *fd);
 	 */
 int  mdb_env_set_mapsize(MDB_env *env, mdb_size_t size);
 
+	/** @brief Get the current mmap pointer
+	 *
+	 * @param[in] env An environment handle returned by #mdb_env_create()
+	 * @param[out]  The address of the pointer to store mmap pointer
+	 * @return A non-zero error value on failure and 0 on success. Some possible
+	 * errors are:
+	 * <ul>
+	 *	<li>EINVAL - an invalid parameter was specified.
+	 * </ul>
+	 */
+int  mdb_env_get_mmap_ptr(MDB_env *env, char **mmap_ptr);
+
 	/** @brief Set the maximum number of threads/reader slots for the environment.
 	 *
 	 * This defines the number of slots in the lock table that is used to track readers in the

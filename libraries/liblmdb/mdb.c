@@ -4313,6 +4313,16 @@ mdb_env_set_mapsize(MDB_env *env, mdb_size_t size)
 }
 
 int ESECT
+mdb_env_get_mmap_ptr(MDB_env *env, char **arg)
+{
+	if (!env || !arg)
+		return EINVAL;
+
+	*arg = env->me_map;
+	return MDB_SUCCESS;
+}
+
+int ESECT
 mdb_env_set_maxdbs(MDB_env *env, MDB_dbi dbs)
 {
 	if (env->me_map)
