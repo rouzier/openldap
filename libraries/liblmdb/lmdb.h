@@ -336,6 +336,13 @@ typedef void (MDB_rel_func)(MDB_val *item, void *oldptr, void *newptr, void *rel
 #define MDB_PREVMETA	0x2000000
 /** @} */
 
+/** @defgroup	mdb_txn_begin	Flags
+ *	@{
+ */
+	/** don't initialize a read only transaction mdb_txn_renew must called before first use */
+#define MDB_TXNRESET	0x8000000
+/** @} */
+
 /**	@defgroup	mdb_dbi_open	Database Flags
  *	@{
  */
@@ -997,6 +1004,8 @@ int  mdb_env_set_assert(MDB_env *env, MDB_assert_func *func);
 	 *		Don't flush system buffers to disk when committing this transaction.
 	 *	<li>#MDB_NOMETASYNC
 	 *		Flush system buffers but omit metadata flush when committing this transaction.
+	 *	<li>#MDB_TXNRESET
+	 *		This transaction will not be initialized must call mdb_txn_renew before using the transaction
 	 * </ul>
 	 * @param[out] txn Address where the new #MDB_txn handle will be stored
 	 * @return A non-zero error value on failure and 0 on success. Some possible
