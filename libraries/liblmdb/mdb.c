@@ -1338,7 +1338,7 @@ struct MDB_txn {
  *	@{
  */
 	/** #mdb_txn_begin() flags */
-#define MDB_TXN_BEGIN_FLAGS	(MDB_NOMETASYNC|MDB_NOSYNC|MDB_RDONLY|MDB_TRYTXN)
+#define MDB_TXN_BEGIN_FLAGS	(MDB_NOMETASYNC|MDB_NOSYNC|MDB_RDONLY|MDB_TRYTXN|MDB_TXNRESET)
 #define MDB_TXN_NOMETASYNC	MDB_NOMETASYNC	/**< don't sync meta for this txn on commit */
 #define MDB_TXN_NOSYNC		MDB_NOSYNC	/**< don't sync this txn on commit */
 #define MDB_TXN_RDONLY		MDB_RDONLY	/**< read-only transaction */
@@ -3151,6 +3151,9 @@ mdb_txn_begin(MDB_env *env, MDB_txn *parent, unsigned int flags, MDB_txn **ret)
 	if (env->me_flags & MDB_RDONLY & ~flags) /* write txn in RDONLY env */
 		return EACCES;
 
+    if((flags & MDB_TXNRESET) && !(flags & MDB_RDONLY)) /*MDB_TXNRESET is only valid with MDB_RDONLY*/
+        return EINVAL;
+
 	if (parent) {
 		/* Nested transactions: Max 1 child, write txns only, no writemap */
 		flags |= parent->mt_flags;
@@ -3238,7 +3241,12 @@ mdb_txn_begin(MDB_env *env, MDB_txn *parent, unsigned int flags, MDB_txn **ret)
 	} else { /* MDB_RDONLY */
 		txn->mt_dbiseqs = env->me_dbiseqs;
 renew:
-		rc = mdb_txn_renew0(txn, try);
+		if(!F_ISSET(flags, (MDB_RDONLY | MDB_TXNRESET)) ) {
+			rc = mdb_txn_renew0(txn, try);
+		} else {
+			txn->mt_flags |= MDB_TXN_FINISHED;
+			rc = MDB_SUCCESS;
+		}
 	}
 	if (rc) {
 		if (txn != env->me_txn0) {

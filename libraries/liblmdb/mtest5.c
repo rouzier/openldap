@@ -76,7 +76,8 @@ int main(int argc,char * argv[])
 	E(mdb_txn_commit(txn));
 	E(mdb_env_stat(env, &mst));
 
-	E(mdb_txn_begin(env, NULL, MDB_RDONLY, &txn));
+	E(mdb_txn_begin(env, NULL, MDB_RDONLY|MDB_TXNRESET, &txn));
+	E(mdb_txn_renew(txn));
 	E(mdb_cursor_open(txn, dbi, &cursor));
 	while ((rc = mdb_cursor_get(cursor, &key, &data, MDB_NEXT)) == 0) {
 		printf("key: %p %.*s, data: %p %.*s\n",
