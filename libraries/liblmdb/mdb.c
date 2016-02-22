@@ -5091,20 +5091,19 @@ mdb_env_open(MDB_env *env, const char *path, unsigned int flags, mdb_mode_t mode
 	}
 #endif
 
-#ifndef _WIN32
-	rc = stat(path, &st);
-	if (rc)
-		return ErrCode();
-	if (S_ISBLK(st.st_mode)) {
-		flags |= MDB_RAWPART;
-	}
-#endif
 	len = strlen(path);
 	if (flags & MDB_NOSUBDIR) {
 		rc = len + sizeof(LOCKSUFF) + len + 1;
-	} else if (flags & MDB_RAWPART) {
-		rc = len + sizeof(LOCKSUFF) + sizeof("/tmp/LMDB#0000");
 	} else {
+#ifndef _WIN32
+		rc = stat(path, &st);
+		if (rc)
+			return ErrCode();
+		if (S_ISBLK(st.st_mode)) {
+			flags |= MDB_RAWPART;
+			rc = len + sizeof(LOCKSUFF) + sizeof("/tmp/LMDB#0000");
+		} else
+#endif
 		rc = len + sizeof(LOCKNAME) + len + sizeof(DATANAME);
 	}
 	lpath = malloc(rc);
