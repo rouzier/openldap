@@ -337,6 +337,13 @@ typedef void (MDB_rel_func)(MDB_val *item, void *oldptr, void *newptr, void *rel
 #define MDB_PREVMETA	0x2000000
 /** @} */
 
+/** @defgroup   mdb_txn_begin   Transation Flags
+ * @{
+ */
+    /** don't block if another write transaction is open */
+#define MDB_TRYTXN 0x4000000
+/** @} */
+
 /**	@defgroup	mdb_dbi_open	Database Flags
  *	@{
  */
@@ -483,8 +490,10 @@ typedef enum MDB_cursor_op {
 #define MDB_BAD_DBI		(-30780)
 	/** Unexpected problem - txn should abort */
 #define MDB_PROBLEM		(-30779)
+	/** There is an active write transaction */
+#define MDB_BUSY		(-30778)
 	/** The last defined error code */
-#define MDB_LAST_ERRCODE	MDB_PROBLEM
+#define MDB_LAST_ERRCODE	MDB_BUSY
 /** @} */
 
 /** @brief Statistics for a database in the environment */
@@ -998,6 +1007,8 @@ int  mdb_env_set_assert(MDB_env *env, MDB_assert_func *func);
 	 *		Don't flush system buffers to disk when committing this transaction.
 	 *	<li>#MDB_NOMETASYNC
 	 *		Flush system buffers but omit metadata flush when committing this transaction.
+	 *	<li>#MDB_TRYTXN
+	 *		Don't block if another write transaction is open
 	 * </ul>
 	 * @param[out] txn Address where the new #MDB_txn handle will be stored
 	 * @return A non-zero error value on failure and 0 on success. Some possible

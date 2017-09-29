@@ -339,6 +339,7 @@ typedef HANDLE mdb_mutex_t, mdb_mutexref_t;
 #define pthread_setspecific(x,y)	(TlsSetValue(x,y) ? 0 : ErrCode())
 #define pthread_mutex_unlock(x)	ReleaseMutex(*x)
 #define pthread_mutex_lock(x)	WaitForSingleObject(*x, INFINITE)
+#define pthread_mutex_trylock(x)	WaitForSingleObject(*x, 0)
 #define pthread_cond_signal(x)	SetEvent(*x)
 #define pthread_cond_wait(cond,mutex)	do{SignalObjectAndWait(*mutex, *cond, INFINITE, FALSE); WaitForSingleObject(*mutex, INFINITE);}while(0)
 #define THREAD_CREATE(thr,start,arg) \
@@ -346,6 +347,7 @@ typedef HANDLE mdb_mutex_t, mdb_mutexref_t;
 #define THREAD_FINISH(thr) \
 	(WaitForSingleObject(thr, INFINITE) ? ErrCode() : 0)
 #define LOCK_MUTEX0(mutex)		WaitForSingleObject(mutex, INFINITE)
+#define TRYLOCK_MUTEX0(mutex)		WaitForSingleObject(mutex, 0)
 #define UNLOCK_MUTEX(mutex)		ReleaseMutex(mutex)
 #define mdb_mutex_consistent(mutex)	0
 #define getpid()	GetCurrentProcessId()
@@ -371,15 +373,16 @@ typedef HANDLE mdb_mutex_t, mdb_mutexref_t;
 #ifdef MDB_USE_POSIX_SEM
 
 typedef sem_t *mdb_mutex_t, *mdb_mutexref_t;
-#define LOCK_MUTEX0(mutex)		mdb_sem_wait(mutex)
+#define LOCK_MUTEX0(mutex)		mdb_sem_wait(mutex, 0)
+#define TRYLOCK_MUTEX0(mutex)		mdb_sem_wait(mutex, 1)
 #define UNLOCK_MUTEX(mutex)		sem_post(mutex)
 
 static int
-mdb_sem_wait(sem_t *sem)
+mdb_sem_wait(sem_t *sem, int try)
 {
-   int rc;
-   while ((rc = sem_wait(sem)) && (rc = errno) == EINTR) ;
-   return rc;
+	int rc;
+	while ((rc = (try ? sem_trywait(sem) : sem_wait(sem))) && (rc = errno) == EINTR) ;
+	return (rc == EAGAIN ? MDB_BUSY : rc);
 }
 
 #elif defined MDB_USE_SYSV_SEM
@@ -390,7 +393,8 @@ typedef struct mdb_mutex {
 	int *locked;
 } mdb_mutex_t[1], *mdb_mutexref_t;
 
-#define LOCK_MUTEX0(mutex)		mdb_sem_wait(mutex)
+#define LOCK_MUTEX0(mutex)		mdb_sem_wait(mutex, 0)
+#define TRYLOCK_MUTEX0(mutex)		mdb_sem_wait(mutex, 1)
 #define UNLOCK_MUTEX(mutex)		do { \
 	struct sembuf sb = { 0, 1, SEM_UNDO }; \
 	sb.sem_num = (mutex)->semnum; \
@@ -399,10 +403,10 @@ typedef struct mdb_mutex {
 } while(0)
 
 static int
-mdb_sem_wait(mdb_mutexref_t sem)
+mdb_sem_wait(mdb_mutexref_t sem, int try)
 {
 	int rc, *locked = sem->locked;
-	struct sembuf sb = { 0, -1, SEM_UNDO };
+	struct sembuf sb = { 0, -1, (try ? SEM_UNDO | IPC_NOWAIT : SEM_UNDO ) };
 	sb.sem_num = sem->semnum;
 	do {
 		if (!semop(sem->semid, &sb, 1)) {
@@ -411,7 +415,7 @@ mdb_sem_wait(mdb_mutexref_t sem)
 			break;
 		}
 	} while ((rc = errno) == EINTR);
-	return rc;
+	return (rc == EAGAIN ? MDB_BUSY : rc);
 }
 
 #define mdb_mutex_consistent(mutex)	0
@@ -429,7 +433,14 @@ typedef pthread_mutex_t *mdb_mutexref_t;
 	/** Lock the reader or writer mutex.
 	 *	Returns 0 or a code to give #mdb_mutex_failed(), as in #LOCK_MUTEX().
 	 */
+static int
+mdb_pthread_mutex_trylock(mdb_mutexref_t mutex) {
+	int rc = pthread_mutex_trylock(mutex);
+	return (rc == EBUSY ? MDB_BUSY : rc);
+}
+
 #define LOCK_MUTEX0(mutex)	pthread_mutex_lock(mutex)
+#define TRYLOCK_MUTEX0(mutex)	mdb_pthread_mutex_trylock(mutex)
 	/** Unlock the reader or writer mutex.
 	 */
 #define UNLOCK_MUTEX(mutex)	pthread_mutex_unlock(mutex)
@@ -489,9 +500,14 @@ typedef pthread_mutex_t *mdb_mutexref_t;
 #define LOCK_MUTEX(rc, env, mutex) \
 	(((rc) = LOCK_MUTEX0(mutex)) && \
 	 ((rc) = mdb_mutex_failed(env, mutex, rc)))
+
+#define TRYLOCK_MUTEX(rc, env, mutex) \
+	(((rc) = TRYLOCK_MUTEX0(mutex)) && \
+	 ((rc) = mdb_mutex_failed(env, mutex, rc)))
 static int mdb_mutex_failed(MDB_env *env, mdb_mutexref_t mutex, int rc);
 #else
 #define LOCK_MUTEX(rc, env, mutex) ((rc) = LOCK_MUTEX0(mutex))
+#define TRYLOCK_MUTEX(rc, env, mutex) ((rc) = TRYLOCK_MUTEX0(mutex))
 #define mdb_mutex_failed(env, mutex, rc) (rc)
 #endif
 
@@ -1322,7 +1338,7 @@ struct MDB_txn {
  *	@{
  */
 	/** #mdb_txn_begin() flags */
-#define MDB_TXN_BEGIN_FLAGS	(MDB_NOMETASYNC|MDB_NOSYNC|MDB_RDONLY)
+#define MDB_TXN_BEGIN_FLAGS	(MDB_NOMETASYNC|MDB_NOSYNC|MDB_RDONLY|MDB_TRYTXN)
 #define MDB_TXN_NOMETASYNC	MDB_NOMETASYNC	/**< don't sync meta for this txn on commit */
 #define MDB_TXN_NOSYNC		MDB_NOSYNC	/**< don't sync this txn on commit */
 #define MDB_TXN_RDONLY		MDB_RDONLY	/**< read-only transaction */
@@ -1687,6 +1703,7 @@ static char *const mdb_errstr[] = {
 	"MDB_BAD_VALSIZE: Unsupported size of key/DB name/data, or wrong DUPFIXED size",
 	"MDB_BAD_DBI: The specified DBI handle was closed/changed unexpectedly",
 	"MDB_PROBLEM: Unexpected problem - txn should abort",
+	"MDB_BUSY: There is an active write transaction",
 };
 
 char *
@@ -2965,7 +2982,7 @@ mdb_reader_pid(MDB_env *env, enum Pidlock_op op, MDB_PID_T pid)
  * @return 0 on success, non-zero on failure.
  */
 static int
-mdb_txn_renew0(MDB_txn *txn)
+mdb_txn_renew0(MDB_txn *txn, int try)
 {
 	MDB_env *env = txn->mt_env;
 	MDB_txninfo *ti = env->me_txns;
@@ -3040,8 +3057,13 @@ mdb_txn_renew0(MDB_txn *txn)
 	} else {
 		/* Not yet touching txn == env->me_txn0, it may be active */
 		if (ti) {
-			if (LOCK_MUTEX(rc, env, env->me_wmutex))
-				return rc;
+			if (try) {
+				if (TRYLOCK_MUTEX(rc, env, env->me_wmutex))
+					return rc;
+			} else {
+				if (LOCK_MUTEX(rc, env, env->me_wmutex))
+					return rc;
+			}
 			txn->mt_txnid = ti->mti_txnid;
 			meta = env->me_metas[txn->mt_txnid & 1];
 		} else {
@@ -3107,7 +3129,7 @@ mdb_txn_renew(MDB_txn *txn)
 	if (!txn || !F_ISSET(txn->mt_flags, MDB_TXN_RDONLY|MDB_TXN_FINISHED))
 		return EINVAL;
 
-	rc = mdb_txn_renew0(txn);
+	rc = mdb_txn_renew0(txn, 0);
 	if (rc == MDB_SUCCESS) {
 		DPRINTF(("renew txn %"Yu"%c %p on mdbenv %p, root page %"Yu,
 			txn->mt_txnid, (txn->mt_flags & MDB_TXN_RDONLY) ? 'r' : 'w',
@@ -3121,7 +3143,7 @@ mdb_txn_begin(MDB_env *env, MDB_txn *parent, unsigned int flags, MDB_txn **ret)
 {
 	MDB_txn *txn;
 	MDB_ntxn *ntxn;
-	int rc, size, tsize;
+	int rc, size, tsize, try = 0;
 
 	flags &= MDB_TXN_BEGIN_FLAGS;
 	flags |= env->me_flags & MDB_WRITEMAP;
@@ -3145,6 +3167,7 @@ mdb_txn_begin(MDB_env *env, MDB_txn *parent, unsigned int flags, MDB_txn **ret)
 		/* Reuse preallocated write txn. However, do not touch it until
 		 * mdb_txn_renew0() succeeds, since it currently may be active.
 		 */
+		try = (flags & MDB_TRYTXN) == MDB_TRYTXN;
 		txn = env->me_txn0;
 		goto renew;
 	}
@@ -3215,7 +3238,7 @@ mdb_txn_begin(MDB_env *env, MDB_txn *parent, unsigned int flags, MDB_txn **ret)
 	} else { /* MDB_RDONLY */
 		txn->mt_dbiseqs = env->me_dbiseqs;
 renew:
-		rc = mdb_txn_renew0(txn);
+		rc = mdb_txn_renew0(txn, try);
 	}
 	if (rc) {
 		if (txn != env->me_txn0) {
@@ -10298,7 +10321,7 @@ mdb_env_copyfd0(MDB_env *env, HANDLE fd)
 		if (LOCK_MUTEX(rc, env, wmutex))
 			goto leave;
 
-		rc = mdb_txn_renew0(txn);
+		rc = mdb_txn_renew0(txn, 0);
 		if (rc) {
 			UNLOCK_MUTEX(wmutex);
 			goto leave;
@@ -11124,7 +11147,7 @@ mdb_mutex_failed(MDB_env *env, mdb_mutexref_t mutex, int rc)
 		}
 	} else {
 #ifdef _WIN32
-		rc = ErrCode();
+		rc = (rc == WAIT_TIMEOUT) ? MDB_BUSY : ErrCode();
 #endif
 		DPRINTF(("LOCK_MUTEX failed, %s", mdb_strerror(rc)));
 	}
