@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <errno.h>
 #include "lmdb.h"
 
 #define E(expr) CHECK((rc = (expr)) == MDB_SUCCESS, #expr)
@@ -28,6 +29,7 @@ int main(int argc,char * argv[])
 	MDB_dbi dbi;
 	MDB_val key, data;
 	MDB_txn *txn;
+	MDB_txn *txn2;
 	MDB_stat mst;
 	MDB_cursor *cursor, *cur2;
 	MDB_cursor_op op;
@@ -49,7 +51,9 @@ int main(int argc,char * argv[])
 		E(mdb_env_set_mapsize(env, 10485760));
 		E(mdb_env_open(env, "./testdb", MDB_FIXEDMAP /*|MDB_NOSYNC*/, 0664));
 
-		E(mdb_txn_begin(env, NULL, 0, &txn));
+		E(mdb_txn_begin(env, NULL, MDB_TRYTXN, &txn));
+		rc = mdb_txn_begin(env, NULL, MDB_TRYTXN, &txn2);
+		CHECK(rc == MDB_BUSY, "mdb_txn_begin+MDB_TRYTXN");
 		E(mdb_dbi_open(txn, NULL, 0, &dbi));
    
 		key.mv_size = sizeof(int);
