@@ -10620,14 +10620,18 @@ int mdb_dbi_open(MDB_txn *txn, const char *name, unsigned int flags, MDB_dbi *db
 
 	if (rc) {
 		/* MDB_NOTFOUND and MDB_CREATE: Create new DB */
-		data.mv_size = sizeof(MDB_db);
-		data.mv_data = &dummy;
-		memset(&dummy, 0, sizeof(dummy));
-		dummy.md_root = P_INVALID;
-		dummy.md_flags = flags & PERSISTENT_FLAGS;
-		WITH_CURSOR_TRACKING(mc,
-			rc = mdb_cursor_put(&mc, &key, &data, F_SUBDATA));
-		dbflag |= DB_DIRTY;
+		if ((txn->mt_flags & MDB_TXN_RDONLY)) {
+			rc = EACCES;
+		} else {
+			data.mv_size = sizeof(MDB_db);
+			data.mv_data = &dummy;
+			memset(&dummy, 0, sizeof(dummy));
+			dummy.md_root = P_INVALID;
+			dummy.md_flags = flags & PERSISTENT_FLAGS;
+			WITH_CURSOR_TRACKING(mc,
+				rc = mdb_cursor_put(&mc, &key, &data, F_SUBDATA));
+			dbflag |= DB_DIRTY;
+		}
 	}
 
 	if (rc) {
