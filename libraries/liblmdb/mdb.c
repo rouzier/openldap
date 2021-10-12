@@ -1637,6 +1637,12 @@ static int	mdb_cursor_set(MDB_cursor *mc, MDB_val *key, MDB_val *data, MDB_curso
 				int *exactp);
 static int	mdb_cursor_first(MDB_cursor *mc, MDB_val *key, MDB_val *data);
 static int	mdb_cursor_last(MDB_cursor *mc, MDB_val *key, MDB_val *data);
+static int	mdb_cursor_first_batch(MDB_cursor *mc);
+static int	mdb_cursor_last_batch(MDB_cursor *mc);
+static int	mdb_cursor_next_batch(MDB_cursor *mc);
+static int	mdb_cursor_prev_batch(MDB_cursor *mc);
+static int	mdb_cursor_get_batch(MDB_cursor *mc, size_t *count, MDB_val *items, size_t limit,
+				MDB_cursor_op op);
 
 static void	mdb_cursor_init(MDB_cursor *mc, MDB_txn *txn, MDB_dbi dbi, MDB_xcursor *mx);
 static void	mdb_xcursor_init0(MDB_cursor *mc);
@@ -7510,6 +7516,18 @@ fetchm:
 	case MDB_LAST_DUP:
 		mfunc = mdb_cursor_last;
 		goto mmove;
+	case MDB_FIRST_BATCH:
+	case MDB_NEXT_BATCH:
+	case MDB_CURRENT_BATCH:
+	case MDB_LAST_BATCH:
+	case MDB_PREV_BATCH:
+	case MDB_CURRENT_R_BATCH:
+		if (key == NULL) {
+			rc = EINVAL;
+			break;
+		}
+		rc = mdb_cursor_get_batch(mc, &key->mv_size, data, key->mv_size, op);
+		break;
 	default:
 		DPRINTF(("unhandled/unimplemented cursor operation %u", op));
 		rc = EINVAL;
@@ -7519,6 +7537,173 @@ fetchm:
 	if (mc->mc_flags & C_DEL)
 		mc->mc_flags ^= C_DEL;
 
+	return rc;
+}
+
+static int
+mdb_cursor_last_batch(MDB_cursor *mc) {
+	int		 rc = MDB_SUCCESS;
+	if (!(mc->mc_flags & C_INITIALIZED) || mc->mc_top) {
+		rc = mdb_page_search(mc, NULL, MDB_PS_LAST);
+		if (rc != MDB_SUCCESS)
+			return rc;
+	}
+	mdb_cassert(mc, IS_LEAF(mc->mc_pg[mc->mc_top]));
+
+	mc->mc_flags |= C_INITIALIZED;
+	mc->mc_ki[mc->mc_top] = NUMKEYS(mc->mc_pg[mc->mc_top]) - 1;
+	return rc;
+}
+
+static int
+mdb_cursor_first_batch(MDB_cursor *mc) {
+	int		 rc = MDB_SUCCESS;
+	if (!(mc->mc_flags & C_INITIALIZED) || mc->mc_top) {
+		rc = mdb_page_search(mc, NULL, MDB_PS_FIRST);
+		if (rc != MDB_SUCCESS)
+			return rc;
+	}
+	mdb_cassert(mc, IS_LEAF(mc->mc_pg[mc->mc_top]));
+
+	mc->mc_flags |= C_INITIALIZED;
+	mc->mc_flags &= ~C_EOF;
+	mc->mc_ki[mc->mc_top] = 0;
+	return rc;
+}
+
+static int
+mdb_cursor_prev_batch(MDB_cursor *mc) {
+	int		 rc = MDB_SUCCESS;
+	if (!(mc->mc_flags & C_INITIALIZED))
+		return mdb_cursor_last_batch(mc);
+
+	if (mc->mc_flags & C_EOF) {
+		if (mc->mc_ki[mc->mc_top] == 0)
+			return MDB_NOTFOUND;
+		mc->mc_flags ^= C_EOF;
+	}
+
+	mc->mc_ki[mc->mc_top]--;
+	if (mc->mc_ki[mc->mc_top] == 0xFFFF) {
+		mc->mc_ki[mc->mc_top] = 0;
+		DPUTS("=====> move to prev sibling page");
+		if ((rc = mdb_cursor_sibling(mc, 0)) != MDB_SUCCESS) {
+			mc->mc_flags |= C_EOF;
+			return rc;
+		}
+		DPRINTF(("prev page is %"Yu", key index %u", mc->mc_pg[mc->mc_top]->mp_pgno, mc->mc_ki[mc->mc_top]));
+	}
+
+	return rc;
+}
+
+static int
+mdb_cursor_next_batch(MDB_cursor *mc) {
+	int		 rc = MDB_SUCCESS;
+	MDB_page * mp;
+	if (!(mc->mc_flags & C_INITIALIZED))
+		return mdb_cursor_first_batch(mc);
+
+	mp = mc->mc_pg[mc->mc_top];
+
+	if (mc->mc_flags & C_EOF) {
+		if (mc->mc_ki[mc->mc_top] >= NUMKEYS(mp)-1)
+			return MDB_NOTFOUND;
+		mc->mc_flags ^= C_EOF;
+	}
+
+	mc->mc_ki[mc->mc_top]++;
+	if (mc->mc_ki[mc->mc_top] >= NUMKEYS(mp)) {
+		DPUTS("=====> move to next sibling page");
+		if ((rc = mdb_cursor_sibling(mc, 1)) != MDB_SUCCESS) {
+			mc->mc_flags |= C_EOF;
+			return rc;
+		}
+		mp = mc->mc_pg[mc->mc_top];
+		DPRINTF(("next page is %"Yu", key index %u", mp->mp_pgno, mc->mc_ki[mc->mc_top]));
+	}
+
+	return rc;
+}
+
+static int
+mdb_cursor_get_batch(MDB_cursor *mc, size_t *count, MDB_val *items, size_t limit,
+				MDB_cursor_op op)
+{
+	int  rc = MDB_SUCCESS, i, direction;
+	int  nkeys;
+	size_t batch=0,j;
+	MDB_page *page;
+	MDB_node *leaf;
+	if (mc == NULL || items == NULL)
+		return EINVAL;
+
+	if (mc->mc_db->md_flags & MDB_DUPSORT)
+		return EINVAL;
+	direction = 1;
+	limit |= ~1;
+	switch (op) {
+	case MDB_NEXT_BATCH:
+		rc = mdb_cursor_next_batch(mc);
+		break;
+	case MDB_FIRST_BATCH:
+		rc = mdb_cursor_first_batch(mc);
+		break;
+	case MDB_CURRENT_BATCH:
+	case MDB_CURRENT_R_BATCH:
+		if (!(mc->mc_flags & C_INITIALIZED)) {
+			rc = EINVAL;
+		} else if (mc->mc_flags & C_EOF) {
+			rc = MDB_NOTFOUND;
+		}
+	    direction = op == MDB_CURRENT_BATCH ? 1 : -1;
+
+		break;
+	case MDB_LAST_BATCH:
+		rc = mdb_cursor_last_batch(mc);
+	    direction = -1;
+		break;
+	case MDB_PREV_BATCH:
+		rc = mdb_cursor_prev_batch(mc);
+	    direction = -1;
+		break;
+	default:
+		DPRINTF(("unhandled/unimplemented cursor operation %u", op));
+		rc = EINVAL;
+		break;
+	}
+
+	if (rc) {
+		*count = 0;
+		return rc;
+	}
+
+	i = mc->mc_ki[mc->mc_top];
+	page = mc->mc_pg[mc->mc_top];
+	nkeys = NUMKEYS(page);
+	if (i>=nkeys) {
+		*count = 0;
+		return MDB_NOTFOUND;
+	}
+
+	j = 0;
+	batch = (direction>0) ? (nkeys - i) * 2 :  (i + 1) * 2;
+	if (batch > limit)
+		batch = limit;
+
+	for (;j<batch;i+=direction,j+=2) {
+		leaf = NODEPTR(page, i);
+		rc = mdb_node_read(mc, leaf, &items[j+1]);
+		if (rc) {
+			i+=direction;
+			break;
+		}
+
+		MDB_GET_KEY2(leaf, items[j]);
+	}
+
+	mc->mc_ki[mc->mc_top] = i - direction;
+	*count = j;
 	return rc;
 }
 

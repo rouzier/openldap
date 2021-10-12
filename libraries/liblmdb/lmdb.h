@@ -422,8 +422,20 @@ typedef enum MDB_cursor_op {
 	MDB_SET,				/**< Position at specified key */
 	MDB_SET_KEY,			/**< Position at specified key, return key + data */
 	MDB_SET_RANGE,			/**< Position at first key greater than or equal to specified key. */
-	MDB_PREV_MULTIPLE		/**< Position at previous page and return up to
+	MDB_PREV_MULTIPLE,		/**< Position at previous page and return up to
 								a page of duplicate data items. Only for #MDB_DUPFIXED */
+	MDB_FIRST_BATCH,		/**< Return the first batch of key/data pairs.
+								Not for MDB_DUPSORT or MDB_DUPFIXED */
+	MDB_NEXT_BATCH,			/**< Return the next batch of key/data pairs.
+								Not for MDB_DUPSORT or MDB_DUPFIXED */
+	MDB_CURRENT_BATCH,		/**< Return the current batch of key/data pairs.
+								Not for MDB_DUPSORT or MDB_DUPFIXED */
+	MDB_LAST_BATCH,			/**< Return the last batch of key/data pairs in reverse order.
+								Not for MDB_DUPSORT or MDB_DUPFIXED */
+	MDB_PREV_BATCH,			/**< Return the next batch of key/data pairs in reverse order.
+								Not for MDB_DUPSORT or MDB_DUPFIXED */
+	MDB_CURRENT_R_BATCH		/**< Return the next batch of key/data pairs in reverse order.
+								Not for MDB_DUPSORT or MDB_DUPFIXED */
 } MDB_cursor_op;
 
 /** @defgroup  errors	Return Codes
@@ -1475,6 +1487,10 @@ MDB_dbi mdb_cursor_dbi(MDB_cursor *cursor);
 	 * case of the #MDB_SET option, in which the \b key object is unchanged), and
 	 * the address and length of the data are returned in the object to which \b data
 	 * refers.
+	 * For batched operations (MDB_FIRST_BATCH, MDB_NEXT_BATCH, MDB_CURRENT_BATCH,
+	 * MDB_LAST_BATCH, MDB_PREV_BATCH, MDB_CURRENT_R_BATCH) \b data should point to an
+	 * array of MDB_val. The \b key mv_size is used to pass in the length of the array
+	 * and return the amount of key/value pairs return.
 	 * See #mdb_get() for restrictions on using the output values.
 	 * @param[in] cursor A cursor handle returned by #mdb_cursor_open()
 	 * @param[in,out] key The key for a retrieved item
