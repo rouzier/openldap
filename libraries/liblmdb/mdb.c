@@ -7521,6 +7521,115 @@ fetchm:
 	return rc;
 }
 
+static int
+mdb_cursor_first_batch(MDB_cursor *mc) {
+	int		 rc = MDB_SUCCESS;
+	if (!(mc->mc_flags & C_INITIALIZED) || mc->mc_top) {
+		rc = mdb_page_search(mc, NULL, MDB_PS_FIRST);
+		if (rc != MDB_SUCCESS)
+			return rc;
+	}
+	mdb_cassert(mc, IS_LEAF(mc->mc_pg[mc->mc_top]));
+
+	mc->mc_flags |= C_INITIALIZED;
+	mc->mc_flags &= ~C_EOF;
+	mc->mc_ki[mc->mc_top] = 0;
+	return rc;
+}
+
+static int
+mdb_cursor_next_batch(MDB_cursor *mc) {
+	int		 rc = MDB_SUCCESS;
+	MDB_page * mp;
+	if (!(mc->mc_flags & C_INITIALIZED))
+		return mdb_cursor_first_batch(mc);
+
+	mp = mc->mc_pg[mc->mc_top];
+
+	if (mc->mc_flags & C_EOF) {
+		if (mc->mc_ki[mc->mc_top] >= NUMKEYS(mp)-1)
+			return MDB_NOTFOUND;
+		mc->mc_flags ^= C_EOF;
+	}
+
+	if (mc->mc_ki[mc->mc_top] + 1u >= NUMKEYS(mp)) {
+		DPUTS("=====> move to next sibling page");
+		if ((rc = mdb_cursor_sibling(mc, 1)) != MDB_SUCCESS) {
+			mc->mc_flags |= C_EOF;
+			return rc;
+		}
+		mp = mc->mc_pg[mc->mc_top];
+		DPRINTF(("next page is %"Yu", key index %u", mp->mp_pgno, mc->mc_ki[mc->mc_top]));
+	} else
+		mc->mc_ki[mc->mc_top]++;
+
+	return rc;
+}
+
+static void
+mdb_resize_pairs(unsigned int *count, MDB_val **pairs, unsigned int need) {
+	if (*count >= need) {
+		return;
+	}
+
+	*pairs = realloc(*pairs, sizeof(MDB_val) * need);
+}
+
+int
+mdb_cursor_get_batch(MDB_cursor *mc, unsigned int *count, MDB_val **pairs,
+				MDB_cursor_op op)
+{
+	int  rc = MDB_SUCCESS, i,j;
+	int  nkeys;
+	MDB_page *page;
+	MDB_val  *data;
+	MDB_node *leaf;
+	if (mc == NULL)
+		return EINVAL;
+
+	if (mc->mc_db->md_flags & MDB_DUPSORT)
+		return EINVAL;
+
+	switch (op) {
+	case MDB_FIRST:
+		rc = mdb_cursor_first_batch(mc);
+		break;
+	case MDB_NEXT:
+		rc = mdb_cursor_next_batch(mc);
+		break;
+	case MDB_GET_CURRENT:
+		if (!(mc->mc_flags & C_INITIALIZED)) {
+			rc = EINVAL;
+		}
+		break;
+	default:
+		DPRINTF(("unhandled/unimplemented cursor operation %u", op));
+		rc = EINVAL;
+		break;
+	}
+
+	if (rc)
+		 return rc;
+
+	i = mc->mc_ki[mc->mc_top];
+	page = mc->mc_pg[mc->mc_top];
+	nkeys = NUMKEYS(page);
+	mdb_resize_pairs(count, pairs, nkeys*2);
+	data = *pairs;
+	*count = nkeys*2;
+	for (j=0;i<nkeys;i++,j+=2) {
+		leaf = NODEPTR(page, i);
+		MDB_GET_KEY(leaf, &data[j]);
+		rc = mdb_node_read(mc, leaf, &data[j+1]);
+		if (rc) {
+			return rc;
+		}
+	}
+
+	mc->mc_ki[mc->mc_top] = NUMKEYS(page) - 1;
+	return rc;
+}
+
 /** Touch all the pages in the cursor stack. Set mc_top.
  *	Makes sure all the pages are writable, before attempting a write operation.
  * @param[in] mc The cursor to operate on.
