@@ -43,7 +43,7 @@ IHDRS	= lmdb.h
 ILIBS	= liblmdb.a liblmdb$(SOEXT)
 IPROGS	= mdb_stat mdb_copy mdb_dump mdb_load mdb_drop
 IDOCS	= mdb_stat.1 mdb_copy.1 mdb_dump.1 mdb_load.1 mdb_drop.1
-PROGS	= $(IPROGS) mtest mtest2 mtest3 mtest4 mtest5
+PROGS	= $(IPROGS) mtest mtest2 mtest3 mtest4 mtest5 mtest7
 RPROGS	= mtest_remap mtest_enc mtest_enc2
 
 all:	$(ILIBS) $(PROGS)
@@ -90,6 +90,7 @@ mtest3:	mtest3.o liblmdb.a
 mtest4:	mtest4.o liblmdb.a
 mtest5:	mtest5.o liblmdb.a
 mtest6:	mtest6.o liblmdb.a
+mtest7:	mtest7.o liblmdb.a
 mtest_remap:  mtest_remap.o liblmdb.a
 mtest_enc:    mtest_enc.o chacha8.o liblmdb.a
 mtest_enc2:	  mtest_enc2.o module.o liblmdb.a crypto.lm

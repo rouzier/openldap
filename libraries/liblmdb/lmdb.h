@@ -1576,6 +1576,29 @@ int mdb_cursor_is_db(MDB_cursor *cursor);
 int  mdb_cursor_get(MDB_cursor *cursor, MDB_val *key, MDB_val *data,
 			    MDB_cursor_op op);
 
+	/** @brief Retrieve multiple key/values by cursor.
+	 *
+	 * This function retrieves multiple key/data pairs from the database.
+	 * The count of key value pairs is returned in theinteger \b count refers. The addresses and lengths
+	 * of the keys and values are returned in the object to which \b pairs refers.
+	 * case of the #MDB_SET option, in which the \b key object is unchanged), and
+	 * the address and length of the data are returned in the object to which \b data
+	 * refers.
+	 * See #mdb_get() for restrictions on using the output values.
+	 * @param[in] cursor A cursor handle returned by #mdb_cursor_open()
+	 * @param[in,out] count The count of key value pairs returned
+	 * @param[in,out] A pointer to the array of key value pairs
+	 * @param[in] op A cursor operation #MDB_cursor_op (only MDB_FIRST, MDB_NEXT, MDB_GET_CURRENT are supported)
+	 * @return A non-zero error value on failure and 0 on success. Some possible
+	 * errors are:
+	 * <ul>
+	 *	<li>#MDB_NOTFOUND - no matching key found.
+	 *	<li>EINVAL - an invalid parameter was specified.
+	 * </ul>
+	 */
+int  mdb_cursor_get_batch(MDB_cursor *cursor, unsigned int *count, MDB_val **pairs,
+			    MDB_cursor_op op);
+
 	/** @brief Store by cursor.
 	 *
 	 * This function stores key/data pairs into the database.
