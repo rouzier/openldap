@@ -7566,25 +7566,16 @@ mdb_cursor_next_batch(MDB_cursor *mc) {
 	return rc;
 }
 
-static void
-mdb_resize_pairs(unsigned int *count, MDB_val **pairs, unsigned int need) {
-	if (*count >= need) {
-		return;
-	}
-
-	*pairs = realloc(*pairs, sizeof(MDB_val) * need);
-}
-
 int
-mdb_cursor_get_batch(MDB_cursor *mc, unsigned int *count, MDB_val **pairs,
+mdb_cursor_get_batch(MDB_cursor *mc, size_t *count, MDB_item *items, size_t limit,
 				MDB_cursor_op op)
 {
-	int  rc = MDB_SUCCESS, i,j;
+	int  rc = MDB_SUCCESS, i;
 	int  nkeys;
+	size_t batch,j;
 	MDB_page *page;
-	MDB_val  *data;
 	MDB_node *leaf;
-	if (mc == NULL)
+	if (mc == NULL || items == NULL)
 		return EINVAL;
 
 	if (mc->mc_db->md_flags & MDB_DUPSORT)
@@ -7600,7 +7591,10 @@ mdb_cursor_get_batch(MDB_cursor *mc, unsigned int *count, MDB_val **pairs,
 	case MDB_GET_CURRENT:
 		if (!(mc->mc_flags & C_INITIALIZED)) {
 			rc = EINVAL;
+		} else if (mc->mc_flags & C_EOF) {
+            rc = MDB_NOTFOUND;
 		}
+
 		break;
 	default:
 		DPRINTF(("unhandled/unimplemented cursor operation %u", op));
@@ -7608,25 +7602,39 @@ mdb_cursor_get_batch(MDB_cursor *mc, unsigned int *count, MDB_val **pairs,
 		break;
 	}
 
-	if (rc)
-		 return rc;
+	if (rc) {
+		*count = 0;
+		return rc;
+    }
 
-	i = mc->mc_ki[mc->mc_top];
 	page = mc->mc_pg[mc->mc_top];
 	nkeys = NUMKEYS(page);
-	mdb_resize_pairs(count, pairs, nkeys*2);
-	data = *pairs;
-	*count = nkeys*2;
-	for (j=0;i<nkeys;i++,j+=2) {
-		leaf = NODEPTR(page, i);
-		MDB_GET_KEY(leaf, &data[j]);
-		rc = mdb_node_read(mc, leaf, &data[j+1]);
-		if (rc) {
-			return rc;
-		}
+	i = mc->mc_ki[mc->mc_top];
+	if (i>=nkeys) {
+		*count = 0;
+		return MDB_NOTFOUND;
 	}
 
-	mc->mc_ki[mc->mc_top] = NUMKEYS(page) - 1;
+	batch = (nkeys - i);
+	if (batch > limit)
+		batch = limit;
+
+	for (j=0;j<batch;i++,j++) {
+		leaf = NODEPTR(page, i);
+		rc = mdb_node_read(mc, leaf, &items[j].value);
+		if (rc) {
+			i++;
+			break;
+		}
+
+		MDB_GET_KEY2(leaf, items[j].key);
+	}
+
+	*count = j;
+	if (op != MDB_GET_CURRENT) {
+		mc->mc_ki[mc->mc_top] = i - 1;
+	}
+
 	return rc;
 }
 

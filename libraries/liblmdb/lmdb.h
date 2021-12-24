@@ -288,6 +288,22 @@ typedef struct MDB_val {
 	void		*mv_data;	/**< address of the data item */
 } MDB_val;
 
+/** @brief Generic structure used for passing keys and data in and out
+ * of the database.
+ *
+ * Values returned from the database are valid only until a subsequent
+ * update operation, or the end of the transaction. Do not modify or
+ * free them, they commonly point into the database itself.
+ *
+ * Key sizes must be between 1 and #mdb_env_get_maxkeysize() inclusive.
+ * The same applies to data sizes in databases with the #MDB_DUPSORT flag.
+ * Other data items can in theory be from 0 to 0xffffffff bytes long.
+ */
+typedef struct MDB_item {
+    MDB_val	    key;
+    MDB_val	    value;
+} MDB_item;
+
 /** @brief A callback function used to compare two keys in a database */
 typedef int  (MDB_cmp_func)(const MDB_val *a, const MDB_val *b);
 
@@ -1492,26 +1508,24 @@ int  mdb_cursor_get(MDB_cursor *cursor, MDB_val *key, MDB_val *data,
 
 	/** @brief Retrieve multiple key/values by cursor.
 	 *
-	 * This function retrieves multiple key/data pairs from the database.
-	 * The count of key value pairs is returned in theinteger \b count refers. The addresses and lengths
-	 * of the keys and values are returned in the object to which \b pairs refers.
-	 * case of the #MDB_SET option, in which the \b key object is unchanged), and
-	 * the address and length of the data are returned in the object to which \b data
-	 * refers.
-	 * See #mdb_get() for restrictions on using the output values.
+	 * This function retrieves a batch of key/data items from the current page.
+	 * The count of key/value item is returned in the integer \b count refers. The addresses and lengths
+	 * of the key/value items are returned in the array to which \b items refers.
+	 * The cursor is advanced to the last item retrieved (except in the case of MDB_GET_CURRENT).
 	 * @param[in] cursor A cursor handle returned by #mdb_cursor_open()
-	 * @param[in,out] count The count of key value pairs returned
-	 * @param[in,out] A pointer to the array of key value pairs
+	 * @param[out] count The count of key/value items returned
+	 * @param[out] items The array of key/value items
+	 * @param[in] limit The maximum of key/value items returned
 	 * @param[in] op A cursor operation #MDB_cursor_op (only MDB_FIRST, MDB_NEXT, MDB_GET_CURRENT are supported)
 	 * @return A non-zero error value on failure and 0 on success. Some possible
 	 * errors are:
 	 * <ul>
-	 *	<li>#MDB_NOTFOUND - no matching key found.
+	 *	<li>#MDB_NOTFOUND - no more items to be returned.
 	 *	<li>EINVAL - an invalid parameter was specified.
 	 * </ul>
 	 */
-int  mdb_cursor_get_batch(MDB_cursor *cursor, unsigned int *count, MDB_val **pairs,
-			    MDB_cursor_op op);
+int  mdb_cursor_get_batch(MDB_cursor *mc, size_t *count, MDB_item *items, size_t limit,
+				MDB_cursor_op op);
 
 	/** @brief Store by cursor.
 	 *
