@@ -7522,6 +7522,21 @@ fetchm:
 }
 
 static int
+mdb_cursor_last_batch(MDB_cursor *mc) {
+	int		 rc = MDB_SUCCESS;
+	if (!(mc->mc_flags & C_INITIALIZED) || mc->mc_top) {
+		rc = mdb_page_search(mc, NULL, MDB_PS_LAST);
+		if (rc != MDB_SUCCESS)
+			return rc;
+	}
+	mdb_cassert(mc, IS_LEAF(mc->mc_pg[mc->mc_top]));
+
+	mc->mc_flags |= C_INITIALIZED;
+	mc->mc_ki[mc->mc_top] = NUMKEYS(mc->mc_pg[mc->mc_top]) - 1;
+	return rc;
+}
+
+static int
 mdb_cursor_first_batch(MDB_cursor *mc) {
 	int		 rc = MDB_SUCCESS;
 	if (!(mc->mc_flags & C_INITIALIZED) || mc->mc_top) {
@@ -7534,6 +7549,34 @@ mdb_cursor_first_batch(MDB_cursor *mc) {
 	mc->mc_flags |= C_INITIALIZED;
 	mc->mc_flags &= ~C_EOF;
 	mc->mc_ki[mc->mc_top] = 0;
+	return rc;
+}
+
+static int
+mdb_cursor_prev_batch(MDB_cursor *mc) {
+	int		 rc = MDB_SUCCESS;
+	if (!(mc->mc_flags & C_INITIALIZED))
+		return mdb_cursor_last_batch(mc);
+
+	if (mc->mc_flags & C_EOF) {
+		if (mc->mc_ki[mc->mc_top] == 0)
+			return MDB_NOTFOUND;
+		mc->mc_flags ^= C_EOF;
+	}
+
+	if (mc->mc_ki[mc->mc_top] == 0) {
+
+		MDB_page * mp;
+		DPUTS("=====> move to prev sibling page");
+		if ((rc = mdb_cursor_sibling(mc, 0)) != MDB_SUCCESS) {
+			mc->mc_flags |= C_EOF;
+			return rc;
+		}
+		mp = mc->mc_pg[mc->mc_top];
+		DPRINTF(("prev page is %"Yu", key index %u", mp->mp_pgno, mc->mc_ki[mc->mc_top]));
+	} else
+		mc->mc_ki[mc->mc_top]--;
+
 	return rc;
 }
 
@@ -7552,7 +7595,8 @@ mdb_cursor_next_batch(MDB_cursor *mc) {
 		mc->mc_flags ^= C_EOF;
 	}
 
-	if (mc->mc_ki[mc->mc_top] + 1u >= NUMKEYS(mp)) {
+	mc->mc_ki[mc->mc_top]++;
+	if (mc->mc_ki[mc->mc_top] >= NUMKEYS(mp)) {
 		DPUTS("=====> move to next sibling page");
 		if ((rc = mdb_cursor_sibling(mc, 1)) != MDB_SUCCESS) {
 			mc->mc_flags |= C_EOF;
@@ -7560,8 +7604,7 @@ mdb_cursor_next_batch(MDB_cursor *mc) {
 		}
 		mp = mc->mc_pg[mc->mc_top];
 		DPRINTF(("next page is %"Yu", key index %u", mp->mp_pgno, mc->mc_ki[mc->mc_top]));
-	} else
-		mc->mc_ki[mc->mc_top]++;
+	}
 
 	return rc;
 }
@@ -7570,7 +7613,7 @@ int
 mdb_cursor_get_batch(MDB_cursor *mc, size_t *count, MDB_item *items, size_t limit,
 				MDB_cursor_op op)
 {
-	int  rc = MDB_SUCCESS, i;
+	int  rc = MDB_SUCCESS, i, direction;
 	int  nkeys;
 	size_t batch,j;
 	MDB_page *page;
@@ -7582,11 +7625,11 @@ mdb_cursor_get_batch(MDB_cursor *mc, size_t *count, MDB_item *items, size_t limi
 		return EINVAL;
 
 	switch (op) {
-	case MDB_FIRST:
-		rc = mdb_cursor_first_batch(mc);
-		break;
 	case MDB_NEXT:
 		rc = mdb_cursor_next_batch(mc);
+		break;
+	case MDB_FIRST:
+		rc = mdb_cursor_first_batch(mc);
 		break;
 	case MDB_GET_CURRENT:
 		if (!(mc->mc_flags & C_INITIALIZED)) {
@@ -7595,6 +7638,12 @@ mdb_cursor_get_batch(MDB_cursor *mc, size_t *count, MDB_item *items, size_t limi
             rc = MDB_NOTFOUND;
 		}
 
+		break;
+	case MDB_LAST:
+		rc = mdb_cursor_last_batch(mc);
+		break;
+	case MDB_PREV:
+		rc = mdb_cursor_prev_batch(mc);
 		break;
 	default:
 		DPRINTF(("unhandled/unimplemented cursor operation %u", op));
@@ -7607,32 +7656,59 @@ mdb_cursor_get_batch(MDB_cursor *mc, size_t *count, MDB_item *items, size_t limi
 		return rc;
     }
 
-	page = mc->mc_pg[mc->mc_top];
-	nkeys = NUMKEYS(page);
 	i = mc->mc_ki[mc->mc_top];
-	if (i>=nkeys) {
-		*count = 0;
-		return MDB_NOTFOUND;
-	}
+	page = mc->mc_pg[mc->mc_top];
+    nkeys = NUMKEYS(page);
+    if (i>=nkeys) {
+        *count = 0;
+        return MDB_NOTFOUND;
+    }
 
-	batch = (nkeys - i);
-	if (batch > limit)
-		batch = limit;
-
-	for (j=0;j<batch;i++,j++) {
-		leaf = NODEPTR(page, i);
-		rc = mdb_node_read(mc, leaf, &items[j].value);
-		if (rc) {
-			i++;
-			break;
+    switch (op) {
+	case MDB_FIRST:
+	case MDB_NEXT:
+	case MDB_GET_CURRENT:
+		batch = (nkeys - i);
+		if (batch > limit)
+			batch = limit;
+	
+		for (j=0;j<batch;i++,j++) {
+			leaf = NODEPTR(page, i);
+			rc = mdb_node_read(mc, leaf, &items[j].value);
+			if (rc) {
+				i++;
+				break;
+			}
+	
+			MDB_GET_KEY2(leaf, items[j].key);
 		}
+	
+		*count = j;
+		if (op != MDB_GET_CURRENT) {
+			mc->mc_ki[mc->mc_top] = i - 1;
+		}
+		break;
+	case MDB_LAST:
+	case MDB_PREV:
+		batch = (i + 1);
+		if (batch > limit)
+			batch = limit;
 
-		MDB_GET_KEY2(leaf, items[j].key);
-	}
-
-	*count = j;
-	if (op != MDB_GET_CURRENT) {
-		mc->mc_ki[mc->mc_top] = i - 1;
+		for (j=0;j<batch;i--,j++) {
+			leaf = NODEPTR(page, i);
+			rc = mdb_node_read(mc, leaf, &items[j].value);
+			if (rc) {
+				i--;
+				break;
+			}
+	
+			MDB_GET_KEY2(leaf, items[j].key);
+		}
+	
+		*count = j;
+		mc->mc_ki[mc->mc_top] = i + 1;
+    default:
+        break;
 	}
 
 	return rc;
