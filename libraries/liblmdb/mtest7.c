@@ -31,7 +31,7 @@ char dkbuf[1024];
 int main(int argc,char * argv[])
 {
 	int rc;
-	size_t i;
+	size_t i,j;
 	MDB_env *env;
 	MDB_dbi dbi;
 	MDB_val key, data, sdata;
@@ -48,7 +48,7 @@ int main(int argc,char * argv[])
 	E(mdb_env_create(&env));
 	E(mdb_env_set_mapsize(env, 10485760));
 	E(mdb_env_set_maxdbs(env, 4));
-	E(mdb_env_open(env, "./testdb", MDB_FIXEDMAP|MDB_NOSYNC, 0664));
+	E(mdb_env_open(env, "./testdb", MDB_NOSYNC, 0664));
 
 	E(mdb_txn_begin(env, NULL, 0, &txn));
 	E(mdb_dbi_open(txn, "id7", MDB_CREATE|MDB_INTEGERKEY, &dbi));
@@ -72,9 +72,10 @@ int main(int argc,char * argv[])
 	E(mdb_txn_begin(env, NULL, MDB_RDONLY, &txn));
 	E(mdb_cursor_open(txn, dbi, &cursor));
 	E(mdb_cursor_open(txn, dbi, &cursor2));
-	E(mdb_cursor_get_batch(cursor, &items_count, items, ITEMS_SIZE, MDB_FIRST));
+	E(mdb_cursor_get_batch(cursor, &items_count, items, ITEMS_SIZE, MDB_FIRST_BATCH));
 
-	for (i=0;i<items_count;i++) {
+	for (j=0,i=0;i<items_count;i++,j++) {
+
 		printf("key: %p %ld, data %p %s\n",
 			items[i].key.mv_data, *((long*)items[i].key.mv_data),
 			items[i].value.mv_data, ((char*)items[i].value.mv_data)
@@ -86,8 +87,8 @@ int main(int argc,char * argv[])
 		CHECK(memcmp(data.mv_data, items[i].value.mv_data, data.mv_size) == 0, "Data is the same");
 	}
 
-	while ((rc = mdb_cursor_get_batch(cursor, &items_count, items, ITEMS_SIZE, MDB_NEXT)) == 0) {
-		for (i=0;i<items_count;i++) {
+	while ((rc = mdb_cursor_get_batch(cursor, &items_count, items, ITEMS_SIZE, MDB_NEXT_BATCH)) == 0) {
+		for (i=0;i<items_count;i++,j++) {
 			printf("key: %p %ld, data %p %s\n",
 				items[i].key.mv_data, *((long*)items[i].key.mv_data),
 				items[i].value.mv_data, ((char*)items[i].value.mv_data)
@@ -99,13 +100,51 @@ int main(int argc,char * argv[])
 		}
 	}
 	CHECK(rc == MDB_NOTFOUND, "mdb_cursor_get_batch");
+	CHECK(KEYS_COUNT == j, "The number of key are the same");
 
 	key.mv_size = sizeof(long);
 	key.mv_data = &kval;
 	kval = 50;
 	mdb_cursor_get(cursor, &key, NULL, MDB_SET);
-	E(mdb_cursor_get_batch(cursor, &items_count, items, ITEMS_SIZE, MDB_GET_CURRENT));
+	E(mdb_cursor_get_batch(cursor, &items_count, items, ITEMS_SIZE, MDB_CURRENT_BATCH));
 	CHECK(*(long*)(items[0].key.mv_data) == 50, "Got 50");
+	CHECK(*(long*)(items[1].key.mv_data) == 51, "Got 51");
+
+	mdb_cursor_renew(txn, cursor2);
+	E(mdb_cursor_get_batch(cursor, &items_count, items, ITEMS_SIZE, MDB_LAST_BATCH));
+	for (j=0,i=0;i<items_count;i++,j++) {
+		printf("key: %p %ld, data %p %s\n",
+			items[i].key.mv_data, *((long*)items[i].key.mv_data),
+			items[i].value.mv_data, ((char*)items[i].value.mv_data)
+		);
+
+		mdb_cursor_get(cursor2, &key, &data, MDB_PREV);
+		CHECK(key.mv_size == items[i].key.mv_size && data.mv_size == items[i].value.mv_size, "Key and Data sizes are correct");
+		CHECK(memcmp(key.mv_data, items[i].key.mv_data, data.mv_size) == 0, "Key is the same");
+		CHECK(memcmp(data.mv_data, items[i].value.mv_data, data.mv_size) == 0, "Data is the same");
+	}
+
+	while ((rc = mdb_cursor_get_batch(cursor, &items_count, items, ITEMS_SIZE, MDB_PREV_BATCH)) == 0) {
+		for (i=0;i<items_count;i++,j++) {
+			printf("key: %p %ld, data %p %s\n",
+				items[i].key.mv_data, *((long*)items[i].key.mv_data),
+				items[i].value.mv_data, ((char*)items[i].value.mv_data)
+			);
+			mdb_cursor_get(cursor2, &key, &data, MDB_PREV);
+			CHECK(key.mv_size == items[i].key.mv_size && data.mv_size == items[i].value.mv_size, "Key and Data sizes are correct");
+			CHECK(memcmp(key.mv_data, items[i].key.mv_data, data.mv_size) == 0, "Key is the same");
+			CHECK(memcmp(data.mv_data, items[i].value.mv_data, data.mv_size) == 0, "Data is the same");
+		}
+	}
+	CHECK(KEYS_COUNT == j, "The number of key are the same");
+
+	key.mv_size = sizeof(long);
+	key.mv_data = &kval;
+	kval = 50;
+	mdb_cursor_get(cursor, &key, NULL, MDB_SET);
+	E(mdb_cursor_get_batch(cursor, &items_count, items, ITEMS_SIZE, MDB_CURRENT_R_BATCH));
+	CHECK(*(long*)(items[0].key.mv_data) == 50, "Got 50");
+	CHECK(*(long*)(items[1].key.mv_data) == 49, "Got 49");
 
 	mdb_cursor_close(cursor);
 	mdb_cursor_close(cursor2);
