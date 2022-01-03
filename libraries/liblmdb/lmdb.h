@@ -288,22 +288,6 @@ typedef struct MDB_val {
 	void		*mv_data;	/**< address of the data item */
 } MDB_val;
 
-/** @brief Generic structure used for passing keys and data in and out
- * of the database.
- *
- * Values returned from the database are valid only until a subsequent
- * update operation, or the end of the transaction. Do not modify or
- * free them, they commonly point into the database itself.
- *
- * Key sizes must be between 1 and #mdb_env_get_maxkeysize() inclusive.
- * The same applies to data sizes in databases with the #MDB_DUPSORT flag.
- * Other data items can in theory be from 0 to 0xffffffff bytes long.
- */
-typedef struct MDB_item {
-    MDB_val	    key;
-    MDB_val	    value;
-} MDB_item;
-
 /** @brief A callback function used to compare two keys in a database */
 typedef int  (MDB_cmp_func)(const MDB_val *a, const MDB_val *b);
 
@@ -438,8 +422,20 @@ typedef enum MDB_cursor_op {
 	MDB_SET,				/**< Position at specified key */
 	MDB_SET_KEY,			/**< Position at specified key, return key + data */
 	MDB_SET_RANGE,			/**< Position at first key greater than or equal to specified key. */
-	MDB_PREV_MULTIPLE		/**< Position at previous page and return up to
+	MDB_PREV_MULTIPLE,		/**< Position at previous page and return up to
 								a page of duplicate data items. Only for #MDB_DUPFIXED */
+	MDB_FIRST_BATCH,		/**< Return the first batch of key/data pairs.
+								Not for MDB_DUPSORT or MDB_DUPFIXED */
+	MDB_NEXT_BATCH,			/**< Return the next batch of key/data pairs.
+								Not for MDB_DUPSORT or MDB_DUPFIXED */
+	MDB_CURRENT_BATCH,		/**< Return the current batch of key/data pairs.
+								Not for MDB_DUPSORT or MDB_DUPFIXED */
+	MDB_LAST_BATCH,			/**< Return the last batch of key/data pairs in reverse order.
+								Not for MDB_DUPSORT or MDB_DUPFIXED */
+	MDB_PREV_BATCH,			/**< Return the next batch of key/data pairs in reverse order.
+								Not for MDB_DUPSORT or MDB_DUPFIXED */
+	MDB_CURRENT_R_BATCH		/**< Return the next batch of key/data pairs in reverse order.
+								Not for MDB_DUPSORT or MDB_DUPFIXED */
 } MDB_cursor_op;
 
 /** @defgroup  errors	Return Codes
@@ -1508,15 +1504,16 @@ int  mdb_cursor_get(MDB_cursor *cursor, MDB_val *key, MDB_val *data,
 
 	/** @brief Retrieve multiple key/values by cursor.
 	 *
-	 * This function retrieves a batch of key/data items from the current page.
+	 * This function retrieves batches of key/data items from the current page.
 	 * The count of key/value item is returned in the integer \b count refers. The addresses and lengths
 	 * of the key/value items are returned in the array to which \b items refers.
-	 * The cursor is advanced to the last item retrieved (except in the case of MDB_GET_CURRENT).
+	 * The cursor is advanced to the last item retrieved.
 	 * @param[in] cursor A cursor handle returned by #mdb_cursor_open()
 	 * @param[out] count The count of key/value items returned
 	 * @param[out] items The array of key/value items
 	 * @param[in] limit The maximum of key/value items returned
-	 * @param[in] op A cursor operation #MDB_cursor_op (only MDB_FIRST, MDB_NEXT, MDB_GET_CURRENT are supported)
+	 * @param[in] op A cursor operation #MDB_cursor_op (only MDB_FIRST_BATCH, MDB_NEXT_BATCH,
+	 * MDB_CURRENT_BATCH, MDB_LAST_BATCH, MDB_PREV_BATCH, MDB_CURRENT_R_BATCH are supported)
 	 * @return A non-zero error value on failure and 0 on success. Some possible
 	 * errors are:
 	 * <ul>
@@ -1524,7 +1521,7 @@ int  mdb_cursor_get(MDB_cursor *cursor, MDB_val *key, MDB_val *data,
 	 *	<li>EINVAL - an invalid parameter was specified.
 	 * </ul>
 	 */
-int  mdb_cursor_get_batch(MDB_cursor *mc, size_t *count, MDB_item *items, size_t limit,
+int  mdb_cursor_get_batch(MDB_cursor *mc, size_t *count, MDB_val *items, size_t limit,
 				MDB_cursor_op op);
 
 	/** @brief Store by cursor.
