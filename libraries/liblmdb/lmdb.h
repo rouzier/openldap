@@ -1487,6 +1487,10 @@ MDB_dbi mdb_cursor_dbi(MDB_cursor *cursor);
 	 * case of the #MDB_SET option, in which the \b key object is unchanged), and
 	 * the address and length of the data are returned in the object to which \b data
 	 * refers.
+	 * For batched operations (MDB_FIRST_BATCH, MDB_NEXT_BATCH, MDB_CURRENT_BATCH,
+	 * MDB_LAST_BATCH, MDB_PREV_BATCH, MDB_CURRENT_R_BATCH) \b data should point to an
+	 * array of MDB_val. The \b key mv_size is used to pass in the length of the array
+	 * and return the amount of key/value pairs return.
 	 * See #mdb_get() for restrictions on using the output values.
 	 * @param[in] cursor A cursor handle returned by #mdb_cursor_open()
 	 * @param[in,out] key The key for a retrieved item
@@ -1501,28 +1505,6 @@ MDB_dbi mdb_cursor_dbi(MDB_cursor *cursor);
 	 */
 int  mdb_cursor_get(MDB_cursor *cursor, MDB_val *key, MDB_val *data,
 			    MDB_cursor_op op);
-
-	/** @brief Retrieve multiple key/values by cursor.
-	 *
-	 * This function retrieves batches of key/data items from the current page.
-	 * The count of key/value item is returned in the integer \b count refers. The addresses and lengths
-	 * of the key/value items are returned in the array to which \b items refers.
-	 * The cursor is advanced to the last item retrieved.
-	 * @param[in] cursor A cursor handle returned by #mdb_cursor_open()
-	 * @param[out] count The count of key/value items returned
-	 * @param[out] items The array of key/value items
-	 * @param[in] limit The maximum of key/value items returned
-	 * @param[in] op A cursor operation #MDB_cursor_op (only MDB_FIRST_BATCH, MDB_NEXT_BATCH,
-	 * MDB_CURRENT_BATCH, MDB_LAST_BATCH, MDB_PREV_BATCH, MDB_CURRENT_R_BATCH are supported)
-	 * @return A non-zero error value on failure and 0 on success. Some possible
-	 * errors are:
-	 * <ul>
-	 *	<li>#MDB_NOTFOUND - no more items to be returned.
-	 *	<li>EINVAL - an invalid parameter was specified.
-	 * </ul>
-	 */
-int  mdb_cursor_get_batch(MDB_cursor *mc, size_t *count, MDB_val *items, size_t limit,
-				MDB_cursor_op op);
 
 	/** @brief Store by cursor.
 	 *
